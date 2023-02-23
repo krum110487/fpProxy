@@ -1,0 +1,50 @@
+{
+	"legacyHTDOCSPath": "../Legacy/htdocs/",
+	"legacyCGIBINPath": "../Legacy/cgi-bin/",
+	"legacyPHPPath": "../Legacy/",
+	"allowCrossDomain": true,
+	"externalFilePaths": [
+		"http://infinity.unstable.life/Flashpoint/Legacy/htdocs",
+		"http://archive.org/download/FP90Data/FP90Data.zip/htdocs"
+	],
+	"extScriptTypes": [
+		"php", "php5", "phtml"
+	],
+	"extMimeTypes": {
+        "default": "application/octet-stream",
+		"htm": "text/html",
+		"html": "text/html",
+		"css": "text/css",
+		"js": "text/javascript",
+		"xml": "application/xml",
+		"wasm": "application/wasm",
+		"swf": "application/x-shockwave-flash",
+		"dir": "application/x-director",
+		"dxr": "application/x-director",
+		"dcr": "application/x-director",
+		"cst": "application/x-director",
+		"cxt": "application/x-director",
+		"cct": "application/x-director",
+		"swa": "application/x-director",
+		"w3d": "application/x-director",
+		"aam": "application/x-authorware-map",
+		"class": "application/java",
+		"jar": "application/java-archive",
+		"xap": "application/x-silverlight-app",
+		"unity3d": "application/vnd.unity",
+		"cmo": "application/x-virtools",
+		"vmo": "application/x-virtools",
+		"nmo": "application/x-virtools",
+		"nms": "application/x-virtools",
+		"cnc": "application/x-cnc",
+		"pwc": "application/x-pulse-player",
+		"pwn": "application/x-pulse-download",
+		"pw3": "application/x-pulse-player-32",
+		"pws": "application/x-pulse-stream",
+		"wrl": "model/vrml",
+		"vrt": "x-world/x-vrt",
+		"svr": "x-world/x-svr",
+		"xvr": "x-world/x-xvr",
+		"evy": "application/envoy"
+	}
+}
