@@ -2,6 +2,7 @@
 	"legacyHTDOCSPath": "../Legacy/htdocs/",
 	"legacyCGIBINPath": "../Legacy/cgi-bin/",
 	"legacyPHPPath": "../Legacy/",
+	"apiPrefix": "fpProxy/api/",
 	"allowCrossDomain": true,
 	"externalFilePaths": [
 		"http://infinity.unstable.life/Flashpoint/Legacy/htdocs",
@@ -9,6 +10,10 @@
 	],
 	"extScriptTypes": [
 		"php", "php5", "phtml"
+	],
+	"extIndexTypes": [
+		"html", "htm", "php", "php5", 
+		"phtml", "asp", "aspx", "jsp", "jspx"
 	],
 	"extMimeTypes": {
         "default": "application/octet-stream",

@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -19,6 +21,64 @@ var legacyProxy *goproxy.ProxyHttpServer
 func init() {
 	legacyProxy = goproxy.NewProxyHttpServer()
 	legacyProxy.Verbose = proxySettings.VerboseLogging
+}
+
+func getLegacyProxy() *goproxy.ProxyHttpServer {
+	legacyProxy.OnRequest().DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		var localFile *os.File = nil
+
+		errResp := goproxy.NewResponse(r, goproxy.ContentTypeText, http.StatusNotFound, "404 Not Found")
+		reqUrl := *r.URL
+		extensions := []string{".html", ".htm"}
+		legacyHTDOCS := proxySettings.LegacyHTDOCSPath
+		fmt.Printf("Legacy Request Started: %s", reqUrl.String())
+
+		//Normalize the path...
+		newPath := path.Join(reqUrl.Host, reqUrl.Path)
+		fp, err := normalizePath(legacyHTDOCS, newPath, false)
+		if err != nil {
+			//TODO: Throw Error here
+		}
+
+		//Try to open the Local File including the indexes which may exist...
+		localFile, err = openIfExists(fp, extensions)
+		if err == nil {
+			//We found a file, so we can create a response!
+			proxyResp := goproxy.NewResponse(r, goproxy.ContentTypeText, http.StatusOK, "")
+			proxyResp.Header.Set("ZIPSVR_FILENAME", localFile.Name())
+			contents, err := readFile(localFile)
+			if err != nil {
+				return r, errResp
+			}
+			proxyResp.Body = contents
+			return r, proxyResp
+		}
+
+		//Only if Mad4FP is enabled...
+		if proxySettings.UseMad4FP {
+			resp, err := getLiveRemoteFile(legacyHTDOCS, *r)
+			if err != nil {
+				fmt.Printf("Mad4FP failed with \"%s\"", err)
+			}
+			if resp.StatusCode < 400 {
+				return r, resp
+			}
+		} else {
+			efp := proxySettings.ExternalFilePaths
+			resp, err := getRemoteFile(efp, legacyHTDOCS, extensions, *r)
+			if err != nil {
+				fmt.Printf("getRemoteFile failed with \"%s\"", err)
+			}
+			if resp.StatusCode < 400 {
+				return r, resp
+			}
+		}
+
+		//Return an error if nothing above worked.
+		return r, errResp
+	})
+
+	return legacyProxy
 }
 
 func normalizePath(rootPath string, pathOrURL string, useCWD bool) (string, error) {
@@ -57,9 +117,31 @@ func normalizePath(rootPath string, pathOrURL string, useCWD bool) (string, erro
 	return filepath.Clean(normPath), nil
 }
 
-func openIfExists(filePath string) (*os.File, error) {
-	_, err := os.Stat(filePath)
+func openIfExists(filePath string, indexExts []string) (*os.File, error) {
+	fi, err := os.Stat(filePath)
+	extn := filepath.Ext(filePath)
 
+	//Only do this if the path is found and is a dir OR
+	//path is not found and the extension is blank.
+	if (err == nil && fi.IsDir()) || (err != nil && extn == "") {
+		//Loop through exts and try to find index.
+		for _, ext := range indexExts {
+			indexFilePath := path.Join(filePath, "/index."+ext)
+			fii, inErr := os.Stat(indexFilePath)
+			if inErr != nil {
+				fi = fii
+				break
+			}
+			err = inErr
+		}
+	}
+
+	//Index was not found, path is a valid dir.
+	if fi != nil && fi.IsDir() {
+		return nil, errors.New(fmt.Sprintf("Index cannot be found inside directory %s", filePath))
+	}
+
+	//File was found and is NOT a directory, we can serve it.
 	if err == nil {
 		// File exists, open it
 		file, err := os.Open(filePath)
@@ -70,50 +152,11 @@ func openIfExists(filePath string) (*os.File, error) {
 		return file, nil
 	} else if os.IsNotExist(err) {
 		// File does not exist
-		return nil, nil
+		return nil, err
 	} else {
 		// Some other error occurred
 		return nil, err
 	}
-}
-
-func getIndexFile(urlPath string) *os.File {
-	var localFile *os.File
-	indexHtmlPath, _ := url.JoinPath(urlPath, "index.html")
-	fileHtmlpath, _ := normalizePath(proxySettings.LegacyHTDOCSPath, indexHtmlPath, false)
-	localFile, _ = openIfExists(fileHtmlpath)
-	if localFile == nil {
-		return localFile
-	}
-
-	indexHtmPath, _ := url.JoinPath(urlPath, "index.htm")
-	fileHtmpath, _ := normalizePath(proxySettings.LegacyHTDOCSPath, indexHtmPath, false)
-	localFile, _ = openIfExists(fileHtmpath)
-	if localFile == nil {
-		return localFile
-	}
-
-	return nil
-}
-
-func getRemoteIndexFile(urlPath string, r *http.Request) *http.Response {
-	indexHtmlPath, _ := url.JoinPath(urlPath, "index.html")
-	for _, baseURL := range proxySettings.ExternalFilePaths {
-		resp := getRemoteFile(baseURL, proxySettings.LegacyHTDOCSPath, indexHtmlPath, *r)
-		if resp != nil && resp.StatusCode != 404 {
-			return resp
-		}
-	}
-
-	indexHtmPath, _ := url.JoinPath(urlPath, "index.htm")
-	for _, baseURL := range proxySettings.ExternalFilePaths {
-		resp := getRemoteFile(baseURL, proxySettings.LegacyHTDOCSPath, indexHtmPath, *r)
-		if resp != nil && resp.StatusCode != 404 {
-			return resp
-		}
-	}
-
-	return nil
 }
 
 func readFile(file *os.File) (io.ReadCloser, error) {
@@ -141,90 +184,99 @@ func readFile(file *os.File) (io.ReadCloser, error) {
 	return ioutil.NopCloser(reader), nil
 }
 
-func getRemoteFile(urlPrefix string, localRootDir string, urlPath string, originalRequest http.Request) *http.Response {
-	// Download the file from the URL and write it to the output file
-	client := &http.Client{}
-	newURL, _ := url.JoinPath(urlPrefix, urlPath)
-	remoteReq, err := http.NewRequest(originalRequest.Method, newURL, originalRequest.Body)
-	response, err := client.Do(remoteReq)
-	if err != nil {
-		return nil
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		return nil
-	}
-
+func saveLocalFile(resp *http.Response, localRootDir string, u url.URL) error {
 	// Get the filename from the URL
+	urlPath := path.Join(u.Host, "/", u.Path)
 	localPath, _ := normalizePath(localRootDir, urlPath, false)
+	resp.Header.Set("ZIPSVR_FILENAME", localPath)
 
 	// Get the directory path from the URL and create any missing directories
 	dirPath := filepath.Dir(localPath)
-	err = os.MkdirAll(dirPath, 0755)
+	err := os.MkdirAll(dirPath, 0755)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// Create the output file
 	file, err := os.Create(localPath)
 	if err != nil {
-		return nil
+		return err
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, response.Body)
+	_, err = io.Copy(file, resp.Body)
 	if err != nil {
-		return nil
+		return err
 	}
 
-	return response
+	return nil
 }
 
-func getLegacyProxy() *goproxy.ProxyHttpServer {
-	legacyProxy.OnRequest().DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		var localFile *os.File = nil
-		errResp := goproxy.NewResponse(r, goproxy.ContentTypeText, http.StatusNotFound, "404 Not Found")
-		reqUrl := *r.URL
-		reqUrlExt := filepath.Ext(reqUrl.Path)
+func getLiveRemoteFile(localRootDir string, originalRequest http.Request) (*http.Response, error) {
+	return getRemoteFile([]string{}, localRootDir, []string{}, originalRequest)
+}
 
-		log.Printf("Legacy Request Started: %s", reqUrl)
+func requestFileAndSave(client *http.Client, prefix string, localRootDir string, u url.URL, origReq http.Request) (*http.Response, error) {
+	newURL := u.String()
+	if prefix != "" {
+		newURL, _ = url.JoinPath(prefix, u.Host, u.Path)
+	}
 
-		//Step 1: Try to find the file, in the root folder
-		if reqUrlExt != "" {
-			fp, err := normalizePath(proxySettings.LegacyHTDOCSPath, reqUrl.Path, false)
-			if err != nil {
-				//TODO: Throw Error here
-			}
-			localFile, err = openIfExists(fp)
-			if localFile == nil {
-				return r, getRemoteFile("", proxySettings.LegacyHTDOCSPath, reqUrl.Path, *r)
-			}
-		} else {
-			localFile = getIndexFile(reqUrl.Path)
-			if localFile == nil {
-				getRemoteIndexFile(reqUrl.Path, r)
-			}
-		}
+	remoteReq, err := http.NewRequest(origReq.Method, newURL, origReq.Body)
+	response, err := client.Do(remoteReq)
+	if err != nil {
+		return nil, err
+	}
 
-		//Step 2: if the file is not found, return here, it isn't found locally:
-		if localFile == nil {
-			return r, errResp
-		}
-
-		//Step 3: If the file is found, we need to create a response
-		proxyResp := goproxy.NewResponse(r, goproxy.ContentTypeText, http.StatusOK, "")
-		contents, err := readFile(localFile)
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusOK {
+		err := saveLocalFile(response, localRootDir, u)
 		if err != nil {
-			//TODO: Throw Error
-			//need to retry...
-			return r, errResp
+			return nil, err
 		}
+		return response, nil
+	}
 
-		//Step 4: Set the contents of the body and return it.
-		proxyResp.Body = contents
-		return r, proxyResp
-	})
+	return nil, errors.New("File was not found!")
+}
 
-	return legacyProxy
+func getRemoteFile(urlPrefix []string, localRootDir string, indexExts []string, origReq http.Request) (*http.Response, error) {
+	client := &http.Client{}
+	errResp := goproxy.NewResponse(&origReq, goproxy.ContentTypeText, http.StatusNotFound, "404 Not Found")
+	var extErr error = nil
+
+	//If the prefix is not set, we are going on the LIVE internet!
+	if len(urlPrefix) < 1 {
+		//GOING TO THAT LIVE INTERWEBZ!
+		resp, err := requestFileAndSave(client, "", localRootDir, *origReq.URL, origReq)
+		extErr = err
+		if err == nil {
+			return resp, nil
+		}
+	} else {
+		//Loop through all the given prefixes
+		for _, prefix := range urlPrefix {
+			//Try the Original url with the prefix.
+			resp, err := requestFileAndSave(client, prefix, localRootDir, *origReq.URL, origReq)
+			extErr = err
+			if err == nil {
+				return resp, nil
+			}
+
+			//If the file wasn't found, we append the indexes until it is found.
+			for _, ext := range indexExts {
+				//Generate url from Remote HTDOCS
+				indexURLstr, _ := url.JoinPath(origReq.URL.String(), "/index."+ext)
+				newIndexURL, _ := url.Parse(indexURLstr)
+
+				//Get the files.
+				resp, err := requestFileAndSave(client, prefix, localRootDir, *newIndexURL, origReq)
+				extErr = err
+				if err == nil {
+					return resp, nil
+				}
+			}
+		}
+	}
+	return errResp, extErr
 }

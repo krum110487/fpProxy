@@ -25,20 +25,24 @@ import (
 )
 
 type ProxySettings struct {
-	LegacyHTDOCSPath    string            `json:"legacyHTDOCSPath"`
-	LegacyCGIBINPath    string            `json:"legacyCGIBINPath"`
-	LegacyPHPPath       string            `json:"legacyPHPPath"`
-	AllowCrossDomain    bool              `json:"allowCrossDomain"`
-	VerboseLogging      bool              `json:"verboseLogging"`
-	ProxyPort           string            `json:"proxyPort"`
-	LegacyServerPort    string            `json:"legacyServerPort"`
-	LegacyLoadPHPServer bool              `json:"legacyUsePHPServer"`
-	ServerHTTPPort      string            `json:"serverHTTPPort"`
-	ServerHTTPSPort     string            `json:"serverHTTPSPort"`
-	GameRootPath        string            `json:"gameRootPath"`
-	ExternalFilePaths   []string          `json:"externalFilePaths"`
-	ExtScriptTypes      []string          `json:"extScriptTypes"`
-	ExtMimeTypes        map[string]string `json:"extMimeTypes"`
+	AllowCrossDomain   bool              `json:"allowCrossDomain"`
+	VerboseLogging     bool              `json:"verboseLogging"`
+	ProxyPort          string            `json:"proxyPort"`
+	ServerHTTPPort     string            `json:"serverHTTPPort"`
+	ServerHTTPSPort    string            `json:"serverHTTPSPort"`
+	GameRootPath       string            `json:"gameRootPath"`
+	ApiPrefix          string            `json:"apiPrefix"`
+	ExternalFilePaths  []string          `json:"externalFilePaths"`
+	ExtScriptTypes     []string          `json:"extScriptTypes"`
+	ExtIndexTypes      []string          `json:"extIndexTypes"`
+	ExtMimeTypes       map[string]string `json:"extMimeTypes"`
+	UseMad4FP          bool              `json:"useMad4FP"`
+	LegacyGoPort       string            `json:"legacyGoPort"`
+	LegacyPHPPort      string            `json:"legacyPHPPort"`
+	LegacyPHPPath      string            `json:"legacyPHPPath"`
+	LegacyUsePHPServer bool              `json:"legacyUsePHPServer"`
+	LegacyHTDOCSPath   string            `json:"legacyHTDOCSPath"`
+	LegacyCGIBINPath   string            `json:"legacyCGIBINPath"`
 }
 
 // ExtApplicationTypes is a map that holds the content types of different file extensions
@@ -66,28 +70,37 @@ func init() {
 	}
 	cwd = strings.ReplaceAll(filepath.Dir(exe), "\\", "/")
 
+	//TODO: Update proxySettings.LegacyHTDOCSPath AND proxySettings.LegacyPHPPath for the default values!
+
 	//Get all of the paramaters passed in.
 	verboseLogging := flag.Bool("v", false, "should every proxy request be logged to stdout")
 	proxyPort := flag.Int("proxyPort", 22500, "proxy listen port")
-	legacyServerPort := flag.Int("legacyServerPort", 22600, "port that the legacy server listens on")
-	legacyLoadPHPServer := flag.Bool("legacyLoadPHPServer", false, "This will run the original PHP script in parallel")
-	legacyHTDOCSPath := flag.String("legacyHTDOCSPath", "D:\\Flashpoint 11 Infinity\\Legacy\\htdocs", "This is the path for HTDOCS")
-	legacyPHPPath := flag.String("legacyPHPPath", "D:\\Flashpoint 11 Infinity\\Legacy", "This is the path for HTDOCS")
 	serverHTTPPort := flag.Int("serverHttpPort", 22501, "zip server http listen port")
 	serverHTTPSPort := flag.Int("serverHttpsPort", 22502, "zip server https listen port")
 	gameRootPath := flag.String("gameRootPath", "D:\\Flashpoint 11 Infinity\\Data\\Games", "This is the path where to find the zips")
+	apiPrefix := flag.String("apiPrefix", proxySettings.ApiPrefix, "apiPrefix is used to prefix any API call.")
+	useMad4FP := flag.Bool("UseMad4FP", false, "flag to turn on/off Mad4FP.")
+	legacyGoPort := flag.Int("legacyGoPort", 22601, "port that the legacy GO server listens on")
+	legacyPHPPort := flag.Int("legacyPHPPort", 22600, "port that the legacy PHP server listens on")
+	legacyPHPPath := flag.String("legacyPHPPath", "D:\\Flashpoint 11 Infinity\\Legacy", "This is the path for HTDOCS")
+	legacyUsePHPServer := flag.Bool("legacyUsePHPServer", true, "This will run the original PHP script in parallel")
+	legacyHTDOCSPath := flag.String("legacyHTDOCSPath", "D:\\Flashpoint 11 Infinity\\Legacy\\htdocs", "This is the path for HTDOCS")
+
 	flag.Parse()
 
 	//Apply all of the flags to the settings
 	proxySettings.VerboseLogging = *verboseLogging
 	proxySettings.ProxyPort = strconv.Itoa(*proxyPort)
-	proxySettings.LegacyServerPort = strconv.Itoa(*legacyServerPort)
-	proxySettings.LegacyLoadPHPServer = *legacyLoadPHPServer
-	proxySettings.LegacyHTDOCSPath = *legacyHTDOCSPath
-	proxySettings.LegacyPHPPath = *legacyPHPPath
 	proxySettings.ServerHTTPPort = strconv.Itoa(*serverHTTPPort)
 	proxySettings.ServerHTTPSPort = strconv.Itoa(*serverHTTPSPort)
 	proxySettings.GameRootPath = *gameRootPath
+	proxySettings.ApiPrefix = *apiPrefix
+	proxySettings.UseMad4FP = *useMad4FP
+	proxySettings.LegacyGoPort = strconv.Itoa(*legacyGoPort)
+	proxySettings.LegacyPHPPort = strconv.Itoa(*legacyPHPPort)
+	proxySettings.LegacyPHPPath = *legacyPHPPath
+	proxySettings.LegacyUsePHPServer = *legacyUsePHPServer
+	proxySettings.LegacyHTDOCSPath = *legacyHTDOCSPath
 
 	//Setup the proxy.
 	proxy = goproxy.NewProxyHttpServer()
@@ -105,12 +118,24 @@ func setContentType(r *http.Request, resp *http.Response) {
 		return
 	}
 
+	rext := filepath.Ext(resp.Header.Get("ZIPSVR_FILENAME"))
 	ext := filepath.Ext(r.URL.Path)
-	if ext == "" {
-		ext = ".default"
+
+	//If the request already has an extension, just use it.
+	if ext != "" {
+		resp.Header.Set("Content-Type", proxySettings.ExtMimeTypes[ext[1:]])
+		return
 	}
 
-	resp.Header.Set("Content-Type", proxySettings.ExtMimeTypes[ext[1:]])
+	//If the response has an extension, use that.
+	if rext != "" {
+		resp.Header.Set("Content-Type", proxySettings.ExtMimeTypes[rext[1:]])
+		return
+	}
+
+	//Finally, just use the default type
+	resp.Header.Set("Content-Type", proxySettings.ExtMimeTypes["default"])
+
 }
 
 func main() {
@@ -141,21 +166,31 @@ func main() {
 		//Check Legacy
 		if proxyResp.StatusCode >= 400 {
 			fmt.Printf("\tServing from Legacy...\n")
-			dialer := &net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-				// DualStack: true, // this is deprecated as of go 1.16
+
+			//Decide on the port to use
+			port := proxySettings.LegacyGoPort
+			if proxySettings.LegacyUsePHPServer {
+				port = proxySettings.LegacyPHPPort
 			}
 
-			proxyURL, _ := url.Parse("127.0.0.1:" + proxySettings.LegacyServerPort)
+			//Set the Proxy URL and apply it to the Transpor layer so that the request respects the proxy.
+			proxyURL, _ := url.Parse("http://127.0.0.1:" + port)
 			proxy := http.ProxyURL(proxyURL)
 			transport := &http.Transport{Proxy: proxy}
+
+			//A custom Dialer is required for the "localflash" urls, instead of using the DNS, we use this.
 			transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-				addr = "127.0.0.1:" + proxySettings.LegacyServerPort
+				//Set Dialer timeout and keepalive to 30 seconds and force the address to localhost.
+				dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+				addr = "127.0.0.1:" + port
 				return dialer.DialContext(ctx, network, addr)
 			}
-			client := &http.Client{Transport: transport, Timeout: 300 * time.Second}
+
+			//TODO: Investigate if I need to blank this out... I don't think this is required.
 			r.RequestURI = ""
+
+			//Make the request with the custom transport.
+			client := &http.Client{Transport: transport, Timeout: 300 * time.Second}
 			proxyResp, err = client.Do(r)
 		}
 
@@ -171,53 +206,66 @@ func main() {
 
 	//Start ZIP server
 	go func() {
-		log.Fatal(http.ListenAndServe(":"+proxySettings.ServerHTTPPort, zipfs.EmptyFileServer("fpProxy/api/", "", proxySettings.VerboseLogging)))
+		//TODO: Update these to be modifiable in the properties json.
+		//TODO: Also update the "fpProxy/api/" to be in the properties json.
+		log.Fatal(http.ListenAndServe(":"+proxySettings.ServerHTTPPort,
+			zipfs.EmptyFileServer(
+				proxySettings.ApiPrefix,
+				"",
+				proxySettings.VerboseLogging,
+				proxySettings.ExtIndexTypes,
+			),
+		))
 	}()
 
 	//Start Legacy server
 	go func() {
-		if proxySettings.LegacyLoadPHPServer {
-			phpPath := filepath.Join(proxySettings.LegacyPHPPath, "php")
-			cmd := exec.Command(phpPath, "-S", "127.0.0.1:"+proxySettings.LegacyServerPort, "router.php")
-			cmd.Dir = proxySettings.LegacyPHPPath
-			stdout, _ := cmd.StdoutPipe()
-			stderr, _ := cmd.StderrPipe()
-			cmd.Start()
-
-			c := make(chan os.Signal, 2)
-			signal.Notify(c, os.Interrupt, os.Kill)
-			go func() {
-				<-c
-				// cleanup
-				cmd.Process.Kill()
-				os.Exit(1)
-			}()
-
-			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				s := bufio.NewScanner(stdout)
-				for s.Scan() {
-					fmt.Println(s.Text())
-				}
-				wg.Done()
-			}()
-
-			wg.Add(1)
-			go func() {
-				s := bufio.NewScanner(stderr)
-				for s.Scan() {
-					fmt.Println(s.Text())
-				}
-				wg.Done()
-			}()
-
-			wg.Wait()
+		if proxySettings.LegacyUsePHPServer {
+			runLegacyPHP()
 		} else {
-			//log.Fatal(http.ListenAndServe(":"+proxySettings.LegacyServerPort, getLegacyProxy()))
+			log.Fatal(http.ListenAndServe(":"+proxySettings.LegacyGoPort, getLegacyProxy()))
 		}
 	}()
 
 	//Start PROXY server
 	log.Fatal(http.ListenAndServe(":"+proxySettings.ProxyPort, proxy))
+}
+
+func runLegacyPHP() {
+	phpPath := filepath.Join(proxySettings.LegacyPHPPath, "php")
+	cmd := exec.Command(phpPath, "-S", "127.0.0.1:"+proxySettings.LegacyPHPPort, "router.php")
+	cmd.Dir = proxySettings.LegacyPHPPath
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	cmd.Start()
+
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, os.Interrupt, os.Kill)
+	go func() {
+		<-c
+		// cleanup
+		cmd.Process.Kill()
+		os.Exit(1)
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		s := bufio.NewScanner(stdout)
+		for s.Scan() {
+			fmt.Println(s.Text())
+		}
+		wg.Done()
+	}()
+
+	wg.Add(1)
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			fmt.Println(s.Text())
+		}
+		wg.Done()
+	}()
+
+	wg.Wait()
 }

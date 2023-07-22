@@ -7,4 +7,4 @@ require (
 	github.com/krum110487/zipfs v0.0.2
 )
 
-replace github.com/krum110487/zipfs v0.0.2 => C:\Projects\zipfs
+replace github.com/krum110487/zipfs v0.0.2 => D:\Projects\zipfs
