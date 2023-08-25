@@ -228,7 +228,7 @@ func main() {
 	}()
 
 	//Start PROXY server
-	log.Fatal(http.ListenAndServe(":"+proxySettings.ProxyPort, proxy))
+	log.Fatal(http.ListenAndServe(":"+proxySettings.ProxyPort, http.AllowQuerySemicolons(proxy)))
 }
 
 func runLegacyPHP() {
