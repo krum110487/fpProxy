@@ -15,8 +15,8 @@
 		"html", "htm", "php", "php5", 
 		"phtml", "asp", "aspx", "jsp", "jspx"
 	],
-	"extMimeTypes": {
-        "default": "",
+	"extMimeTypesZipFS": {
+		"default": "",
 		"asd": "application/astound",
 		"pqi": "application/cprplayer",
 		"evy": "application/envoy",
@@ -133,6 +133,8 @@
 		"fh5": "image/x-freehand5",
 		"fh7": "image/x-freehand7",
 		"qdgx": "image/x-qdgx",
+		"svg": "image/svg+xml",
+		"svgx": "image/svg+xml",
 		"twf": "image/x-twf",
 		"twfz": "image/x-twf-zlib-compressed",
 		"wrl": "model/vrml",
@@ -155,5 +157,7 @@
 		"vrt": "x-world/x-vrt",
 		"wvr": "x-world/x-wvr",
 		"xvr": "x-world/x-xvr"
+	},
+	"extMimeTypesProxyOverride": {
 	}
 }

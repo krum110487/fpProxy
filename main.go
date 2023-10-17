@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -25,24 +24,25 @@ import (
 )
 
 type ProxySettings struct {
-	AllowCrossDomain   bool              `json:"allowCrossDomain"`
-	VerboseLogging     bool              `json:"verboseLogging"`
-	ProxyPort          string            `json:"proxyPort"`
-	ServerHTTPPort     string            `json:"serverHTTPPort"`
-	ServerHTTPSPort    string            `json:"serverHTTPSPort"`
-	GameRootPath       string            `json:"gameRootPath"`
-	ApiPrefix          string            `json:"apiPrefix"`
-	ExternalFilePaths  []string          `json:"externalFilePaths"`
-	ExtScriptTypes     []string          `json:"extScriptTypes"`
-	ExtIndexTypes      []string          `json:"extIndexTypes"`
-	ExtMimeTypes       map[string]string `json:"extMimeTypes"`
-	UseMad4FP          bool              `json:"useMad4FP"`
-	LegacyGoPort       string            `json:"legacyGoPort"`
-	LegacyPHPPort      string            `json:"legacyPHPPort"`
-	LegacyPHPPath      string            `json:"legacyPHPPath"`
-	LegacyUsePHPServer bool              `json:"legacyUsePHPServer"`
-	LegacyHTDOCSPath   string            `json:"legacyHTDOCSPath"`
-	LegacyCGIBINPath   string            `json:"legacyCGIBINPath"`
+	AllowCrossDomain          bool              `json:"allowCrossDomain"`
+	VerboseLogging            bool              `json:"verboseLogging"`
+	ProxyPort                 string            `json:"proxyPort"`
+	ServerHTTPPort            string            `json:"serverHTTPPort"`
+	ServerHTTPSPort           string            `json:"serverHTTPSPort"`
+	GameRootPath              string            `json:"gameRootPath"`
+	ApiPrefix                 string            `json:"apiPrefix"`
+	ExternalFilePaths         []string          `json:"externalFilePaths"`
+	ExtScriptTypes            []string          `json:"extScriptTypes"`
+	ExtIndexTypes             []string          `json:"extIndexTypes"`
+	ExtMimeTypesZipFS         map[string]string `json:"extMimeTypesZipFS"`
+	ExtMimeTypesProxyOverride map[string]string `json:"extMimeTypesProxyOverride"`
+	UseMad4FP                 bool              `json:"useMad4FP"`
+	LegacyGoPort              string            `json:"legacyGoPort"`
+	LegacyPHPPort             string            `json:"legacyPHPPort"`
+	LegacyPHPPath             string            `json:"legacyPHPPath"`
+	LegacyUsePHPServer        bool              `json:"legacyUsePHPServer"`
+	LegacyHTDOCSPath          string            `json:"legacyHTDOCSPath"`
+	LegacyCGIBINPath          string            `json:"legacyCGIBINPath"`
 }
 
 // ExtApplicationTypes is a map that holds the content types of different file extensions
@@ -52,7 +52,7 @@ var cwd string
 
 func init() {
 	// Load the content types from the JSON file
-	data, err := ioutil.ReadFile("proxySettings.json")
+	data, err := os.ReadFile("proxySettings.json")
 	if err != nil {
 		panic(err)
 	}
@@ -118,38 +118,56 @@ func setContentType(r *http.Request, resp *http.Response) {
 		return
 	}
 
-	rext := filepath.Ext(resp.Header.Get("ZIPSVR_FILENAME"))
-	ext := filepath.Ext(r.URL.Path)
+	//Get the ZipFS and Request Extensions if they have it.
+	rext := filepath.Ext(strings.ToLower(resp.Header.Get("ZIPSVR_FILENAME")))
+	ext := filepath.Ext(strings.ToLower(r.URL.Path))
 
-	//If the request already has an extension, just use it.
+	//If the request already has an extension, just use it, only when setup in the ProxyOverride
 	if ext != "" {
-		resp.Header.Set("Content-Type", proxySettings.ExtMimeTypes[ext[1:]])
+		resp.Header.Set("Content-Type", proxySettings.ExtMimeTypesProxyOverride[ext[1:]])
 		return
 	}
 
 	//If the response has an extension, use that.
 	if rext != "" {
-		resp.Header.Set("Content-Type", proxySettings.ExtMimeTypes[rext[1:]])
+		resp.Header.Set("Content-Type", proxySettings.ExtMimeTypesProxyOverride[rext[1:]])
 		return
 	}
 
-	//Finally, just use the default type
-	resp.Header.Set("Content-Type", proxySettings.ExtMimeTypes["default"])
-
+	//Finally, just use the default type IF it exists AND it is not already set.
+	existingMime := resp.Header.Get("Content-Type")
+	defExt, ok := proxySettings.ExtMimeTypesProxyOverride["default"]
+	if ok && existingMime == "" {
+		resp.Header.Set("Content-Type", defExt)
+	}
 }
 
 func main() {
+	proxy.NonproxyHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		//TODO: Needs Actual implementation of described below
+		//This will be used to handle the response from zipfs instead of the launcher sending it
+		//directly to the zipfs, it would be forwarded through this handler.
+
+		//Handle the endpoints here and forward it to zipfs, intercept the response
+		//If the response for adding a zip is < 400 then we will intercept it and grab the body
+		//which contains a list of Paths for the redirect and other configs for the proxy.
+		//Then we hit the zipfs server to pull the files contents and parse it
+		//Once it is parsed and ready THEN return the response to the front-end.
+		//This will make the front-end wait until we are ready to continue.
+		http.Error(w, "The endpoint is invalid.", 500)
+	})
+
 	//Handle the re-routing to local files or what not.
 	proxy.OnRequest().DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		fmt.Printf("Proxy Request: %s\n", r.URL.Host+r.URL.Path)
 		newURL := *r.URL
+		newPath, _ := url.PathUnescape(r.URL.Path)
+		newURL.Path = "content/" + strings.TrimSpace(r.URL.Host+newPath)
 		if r.TLS == nil {
 			//HTTP request
-			newURL.Path = "content/" + r.URL.Host + r.URL.Path
 			newURL.Host = "127.0.0.1:" + proxySettings.ServerHTTPPort
 		} else {
 			//HTTPS request, currently goes to the same server
-			newURL.Path = "content/" + r.URL.Host + r.URL.Path
 			newURL.Host = "127.0.0.1:" + proxySettings.ServerHTTPSPort
 		}
 
@@ -214,6 +232,7 @@ func main() {
 				"",
 				proxySettings.VerboseLogging,
 				proxySettings.ExtIndexTypes,
+				proxySettings.ExtMimeTypesZipFS,
 			),
 		))
 	}()
